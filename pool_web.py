@@ -106,7 +106,7 @@ def load_users() -> Dict[str, Any]:
     raw = ws.acell("A1").value
     if not raw:
         # initialise with default users (admin + sample investor)
-        ws.update("A1", json.dumps(DEFAULT_USERS))
+        ws.update("A1", [[json.dumps(DEFAULT_USERS)]])
         return DEFAULT_USERS.copy()
     try:
         data = json.loads(raw)
@@ -119,7 +119,7 @@ def save_users(users: Dict[str, Any]) -> None:
     if is_demo_mode():
         return
     ws = _get_or_create_ws("USERS_JSON")
-    ws.update("A1", json.dumps(users))
+    ws.update("A1", [[json.dumps(users)]])
 
 def load_data() -> Dict[str, Any]:
     """Load main pool data from Google Sheets (DATA_JSON!A1)."""
@@ -137,7 +137,7 @@ def load_data() -> Dict[str, Any]:
             "audit_log": [],
             "pl_calendar": [],
         }
-        ws.update("A1", json.dumps(data))
+        ws.update("A1", [[json.dumps(data)]])
         return data
     try:
         data = json.loads(raw)
@@ -171,7 +171,7 @@ def save_data(data: Dict[str, Any]) -> None:
     if is_demo_mode():
         return
     ws = _get_or_create_ws("DATA_JSON")
-    ws.update("A1", json.dumps(data))
+    ws.update("A1", [[json.dumps(data)]])
 
 
 

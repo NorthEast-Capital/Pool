@@ -815,7 +815,7 @@ def rename_investor_everywhere(data: Dict[str, Any], old: str, new: str) -> None
 # LOGIN & FORGOT PASSWORD
 # ============================================================
 
-ddef login_screen():
+def login_screen():
     if "users" not in st.session_state:
         st.session_state["users"] = load_users()
     users = st.session_state["users"]
@@ -2460,3 +2460,4 @@ elif role == "investor" and nav_page == "Messages / Chat":
                     from_user=user["username"],
                     to_usernames=admins,
               
+

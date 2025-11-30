@@ -2459,6 +2459,12 @@ elif role == "investor" and nav_page == "Messages / Chat":
                     data,
                     from_user=user["username"],
                     to_usernames=admins,
+                title=title,
+                    message=msg,
+                    ntype="chat",
                 )
+                st.success("Message sent to admin.")
+
+
 
 

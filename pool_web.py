@@ -10,6 +10,7 @@ from email.message import EmailMessage
 
 import streamlit as st
 import pandas as pd
+import hashlib
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -35,7 +36,7 @@ ADMIN_EMAIL = "northeast1.capital@gmail.com"
 
 DEFAULT_USERS = {
     "admin": {
-        "password": "Admin@2025!",   # change after first login
+        "password": "188209e1a05f534cbbabe055a14ea1b7b1d940033a7647483b04f18d58c0a87a",
         "role": "admin",
         "investor_name": None,
         "active": True,
@@ -45,28 +46,88 @@ DEFAULT_USERS = {
         "username_locked": False,
         "last_login": None,
         "prev_login": None,
-    },
-    "investor1": {
-        "password": "Investor@2025!",
-        "role": "investor",
-        "investor_name": "Sample Investor",
-        "active": True,
-        "phone": "",
-        "email": "",
-        "investor_name_locked": False,
-        "username_locked": False,
-        "last_login": None,
-        "prev_login": None,
+        "failed_attempts": 0,
+        "locked_until": None,
     },
 }
 
 # ============================================================
-# BASIC UTILITIES
+# SECURITY HELPERS (PASSWORD HASHING & LOGIN LOCKOUT)
 # ============================================================
 
-def is_demo_mode() -> bool:
-    return bool(st.session_state.get("demo_mode", False))
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 10  # minutes to lock account after too many failures
 
+
+def hash_password(plain: str) -> str:
+    """Return a SHA-256 hash for the given plain-text password."""
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest()
+
+
+def is_probably_hashed(value: str) -> bool:
+    """Heuristic: check if a stored password looks like a SHA-256 hex hash."""
+    if not isinstance(value, str):
+        return False
+    if len(value) != 64:
+        return False
+    for ch in value:
+        if ch not in "0123456789abcdef":
+            return False
+    return True
+
+
+def verify_password(plain: str, stored: str) -> bool:
+    """
+    Check if the plain password matches the stored value.
+    Supports both hashed and legacy plain-text passwords.
+    """
+    if is_probably_hashed(stored):
+        return hash_password(plain) == stored
+    # legacy behaviour: stored as plain text
+    return plain == stored
+
+
+def is_account_locked(user_rec: Dict[str, Any]) -> bool:
+    """
+    Return True if account is currently locked.
+    Also auto-clears lock if the lock time has passed.
+    """
+    locked_until_str = user_rec.get("locked_until")
+    if not locked_until_str:
+        return False
+
+    try:
+        locked_until = datetime.strptime(locked_until_str, "%Y-%m-%d %H:%M")
+    except Exception:
+        # if format is broken, clear the lock
+        user_rec["locked_until"] = None
+        user_rec["failed_attempts"] = 0
+        return False
+
+    now = datetime.now()
+    if now < locked_until:
+        return True
+
+    # lock expired -> clear it
+    user_rec["locked_until"] = None
+    user_rec["failed_attempts"] = 0
+    return False
+
+
+def register_failed_login(user_rec: Dict[str, Any]) -> None:
+    """Increase failed attempts counter and lock account if threshold reached."""
+    failed = int(user_rec.get("failed_attempts") or 0) + 1
+    user_rec["failed_attempts"] = failed
+
+    if failed >= MAX_FAILED_ATTEMPTS:
+        lock_until = datetime.now() + timedelta(minutes=LOCKOUT_MINUTES)
+        user_rec["locked_until"] = lock_until.strftime("%Y-%m-%d %H:%M")
+
+
+def reset_login_attempts(user_rec: Dict[str, Any]) -> None:
+    """Reset failed attempts counter and clear lock."""
+    user_rec["failed_attempts"] = 0
+    user_rec["locked_until"] = None
 
 # ============================================================
 # GOOGLE SHEETS "DATABASE" HELPERS
@@ -173,6 +234,20 @@ def save_data(data: Dict[str, Any]) -> None:
     ws = _get_or_create_ws("DATA_JSON")
     ws.update("A1", [[json.dumps(data)]])
 
+def generate_unique_username(base: str, users: Dict[str, Any]) -> str:
+    """
+    Generate a unique username based on `base`.
+    If base is taken, appends a number: base1, base2, etc.
+    """
+    base_clean = "".join(c.lower() for c in base if c.isalnum())
+    if not base_clean:
+        base_clean = "investor"
+    username = base_clean
+    i = 1
+    while username in users:
+        username = f"{base_clean}{i}"
+        i += 1
+    return username
 
 
 def get_settings(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -752,8 +827,16 @@ def login_screen():
         with st.form("login_form"):
             login_id = st.text_input("Email or investor name")
             password = st.text_input("Password", type="password")
-            login_clicked = st.form_submit_button("Login")
+            col1, col2 = st.columns(2)
+            with col1:
+                login_clicked = st.form_submit_button("Login", type="primary")
+            with col2:
+                register_clicked = st.form_submit_button("Register as new investor")
 
+        if register_clicked:
+            st.session_state["login_mode"] = "register"
+            st.rerun()
+        
         if login_clicked:
             id_clean = (login_id or "").strip()
             id_lower = id_clean.lower()
@@ -771,7 +854,7 @@ def login_screen():
                     elif inv_name and inv_name == id_lower:
                         inv_matches.append((uname, u))
 
-                matched = email_matches or inv_matches
+                                matched = email_matches or inv_matches
 
                 if not matched:
                     st.error("No account found with this email or investor name.")
@@ -779,31 +862,159 @@ def login_screen():
                     st.error("More than one account matches this login ID. Please contact admin.")
                 else:
                     uname, user_rec = matched[0]
-                    if not user_rec.get("active", True):
-                        st.error("This account is inactive. Please contact admin.")
-                    elif password != user_rec["password"]:
-                        st.error("Invalid password.")
-                    else:
-                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                        prev_login = user_rec.get("last_login")
-                        user_rec["prev_login"] = prev_login
-                        user_rec["last_login"] = now_str
-                        users[uname] = user_rec
-                        save_users(users)
-                        st.session_state["users"] = users
 
-                        st.session_state["user"] = {
-                            "username": uname,
-                            "role": user_rec["role"],
-                            "investor_name": user_rec.get("investor_name"),
-                        }
-                        st.experimental_set_query_params()
-                        st.rerun()
+                    # Ensure security fields exist
+                    if "failed_attempts" not in user_rec:
+                        user_rec["failed_attempts"] = 0
+                    if "locked_until" not in user_rec:
+                        user_rec["locked_until"] = None
+
+                    # Check for temporary lock
+                    if is_account_locked(user_rec):
+                        locked_until_str = user_rec.get("locked_until")
+                        if locked_until_str:
+                            st.error(
+                                f"This account is temporarily locked until {locked_until_str}. "
+                                "Please try again later or contact admin."
+                            )
+                        else:
+                            st.error(
+                                "This account is temporarily locked. "
+                                "Please try again later or contact admin."
+                            )
+                    elif not user_rec.get("active", True):
+                        st.error("This account is inactive. Please contact admin.")
+                    else:
+                        stored_pw = user_rec.get("password") or ""
+                        if not verify_password(password, stored_pw):
+                            # Wrong password: increment failed attempts and maybe lock
+                            register_failed_login(user_rec)
+                            users[uname] = user_rec
+                            save_users(users)
+                            st.session_state["users"] = users
+
+                            if user_rec.get("locked_until"):
+                                st.error(
+                                    f"Too many failed attempts. This account is locked until {user_rec['locked_until']}."
+                                )
+                            else:
+                                remaining = MAX_FAILED_ATTEMPTS - int(user_rec.get("failed_attempts") or 0)
+                                st.error(
+                                    f"Invalid password. {remaining} attempts remaining before temporary lock."
+                                )
+                        else:
+                            # Correct password: upgrade to hashed if needed, reset attempts, log in
+                            if not is_probably_hashed(stored_pw):
+                                user_rec["password"] = hash_password(password)
+                            reset_login_attempts(user_rec)
+
+                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            prev_login = user_rec.get("last_login")
+                            user_rec["prev_login"] = prev_login
+                            user_rec["last_login"] = now_str
+                            users[uname] = user_rec
+                            save_users(users)
+                            st.session_state["users"] = users
+
+                            st.session_state["user"] = {
+                                "username": uname,
+                                "role": user_rec["role"],
+                                "investor_name": user_rec.get("investor_name"),
+                            }
+                            st.experimental_set_query_params()
+                            st.rerun()
+
 
         if st.button("Forgot password?"):
             st.session_state["login_mode"] = "forgot"
             st.rerun()
 
+        elif mode == "register":
+        st.title("Northeast Capitol - Register")
+        st.markdown("#### New investor registration")
+
+        with st.form("register_form"):
+            investor_name = st.text_input("Investor name (will appear in reports)")
+            email = st.text_input("Email (used for login & notifications)")
+            phone = st.text_input("Phone (optional)")
+            password = st.text_input("Password", type="password")
+            confirm_pw = st.text_input("Confirm password", type="password")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                create_clicked = st.form_submit_button("Create account", type="primary")
+            with col2:
+                back_clicked = st.form_submit_button("Back to login")
+
+        if back_clicked:
+            st.session_state["login_mode"] = "login"
+            st.rerun()
+
+        if create_clicked:
+            # ---- basic validation ----
+            name_clean = (investor_name or "").strip()
+            email_clean = (email or "").strip()
+            pw = password or ""
+            pw2 = confirm_pw or ""
+
+            if not name_clean:
+                st.error("Investor name is required.")
+                return
+            if not email_clean:
+                st.error("Email is required.")
+                return
+            if pw != pw2:
+                st.error("Passwords do not match.")
+                return
+            if len(pw) < 6:
+                st.error("Password should be at least 6 characters.")
+                return
+
+            # check email / investor name not already used
+            email_lower = email_clean.lower()
+            name_lower = name_clean.lower()
+            for uname, u in users.items():
+                existing_email = (u.get("email") or "").strip().lower()
+                existing_name = (u.get("investor_name") or "").strip().lower()
+                if existing_email and existing_email == email_lower:
+                    st.error("This email is already registered. Please log in or contact admin.")
+                    return
+                if existing_name and existing_name == name_lower:
+                    st.error("This investor name is already used. Please choose a slightly different name.")
+                    return
+
+            # ---- create new investor user ----
+            new_username = generate_unique_username(email_clean or name_clean, users)
+
+            users[new_username] = {
+                "password": pw,
+                "role": "investor",          # 👈 auto investor role
+                "investor_name": name_clean,
+                "active": False,              # or False if you want admin approval first
+                "phone": phone or "",
+                "email": email_clean,
+                "investor_name_locked": False,
+                "username_locked": False,
+                "last_login": None,
+                "prev_login": None,
+            }
+
+            save_users(users)
+            st.session_state["users"] = users
+
+            # auto-login new investor
+            st.session_state["user"] = {
+                "username": new_username,
+                "role": "investor",
+                "investor_name": name_clean,
+            }
+
+            st.success("Account created. Admin needs to activate your account before you can log in.")
+            st.session_state["login_mode"] = "login"
+            st.rerun()
+
+    
+    
     elif mode == "forgot":
         st.title("Northeast Capitol - Forgot Password")
         st.markdown("Enter your registered email and choose a new password.")
@@ -835,12 +1046,16 @@ def login_screen():
                     st.error("This email is not registered.")
                 elif len(matched_usernames) > 1:
                     st.error("More than one account uses this email. Please contact admin.")
-                else:
+               else:
                     uname = matched_usernames[0]
-                    users[uname]["password"] = fp_new_pwd
+                    u = users[uname]
+                    u["password"] = hash_password(fp_new_pwd)
+                    reset_login_attempts(u)
+                    users[uname] = u
                     save_users(users)
                     st.session_state["users"] = users
                     st.success("Password has been reset. You can now log in.")
+
 
         if st.button("Back to login"):
             st.session_state["login_mode"] = "login"
@@ -1763,14 +1978,15 @@ elif role == "admin" and nav_page == "User management":
         elif not password and username not in users:
             st.error("Password is required for new user.")
         else:
-            u = users.get(username, {})
+                        u = users.get(username, {})
             if password:
                 if not is_strong_password(password):
                     st.error("Password must be at least 8 characters and contain letters and numbers.")
                     st.stop()
-                u["password"] = password
+                u["password"] = hash_password(password)
             u["role"] = role_new
             u["investor_name"] = investor_name if role_new == "investor" else None
+
             u["email"] = email
             u["phone"] = phone
             u["active"] = active_flag

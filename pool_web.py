@@ -249,7 +249,7 @@ def generate_unique_username(base: str, users: Dict[str, Any]) -> str:
         i += 1
     return username
 
-ddef is_demo_mode() -> bool:
+def is_demo_mode() -> bool:
     """Return True if the app is running in demo mode (no saving)."""
     return bool(st.session_state.get("demo_mode", False))
 
@@ -2483,3 +2483,4 @@ elif role == "investor" and nav_page == "Messages / Chat":
                     ntype="chat",
                 )
                 st.success("Message sent to admin.")
+

@@ -820,6 +820,9 @@ def login_screen():
         st.session_state["login_mode"] = "login"
     mode = st.session_state["login_mode"]
 
+    # ---------------------------
+    # LOGIN MODE
+    # ---------------------------
     if mode == "login":
         st.title("Northeast Capitol - Login")
 
@@ -836,7 +839,7 @@ def login_screen():
         if register_clicked:
             st.session_state["login_mode"] = "register"
             st.rerun()
-        
+
         if login_clicked:
             id_clean = (login_id or "").strip()
             id_lower = id_clean.lower()
@@ -854,7 +857,7 @@ def login_screen():
                     elif inv_name and inv_name == id_lower:
                         inv_matches.append((uname, u))
 
-                                matched = email_matches or inv_matches
+                matched = email_matches or inv_matches
 
                 if not matched:
                     st.error("No account found with this email or investor name.")
@@ -924,12 +927,14 @@ def login_screen():
                             st.experimental_set_query_params()
                             st.rerun()
 
-
         if st.button("Forgot password?"):
             st.session_state["login_mode"] = "forgot"
             st.rerun()
 
-        elif mode == "register":
+    # ---------------------------
+    # REGISTER MODE
+    # ---------------------------
+    elif mode == "register":
         st.title("Northeast Capitol - Register")
         st.markdown("#### New investor registration")
 
@@ -966,8 +971,8 @@ def login_screen():
             if pw != pw2:
                 st.error("Passwords do not match.")
                 return
-            if len(pw) < 6:
-                st.error("Password should be at least 6 characters.")
+            if not is_strong_password(pw):
+                st.error("Password must be at least 8 characters and contain letters and numbers.")
                 return
 
             # check email / investor name not already used
@@ -987,34 +992,30 @@ def login_screen():
             new_username = generate_unique_username(email_clean or name_clean, users)
 
             users[new_username] = {
-                "password": pw,
-                "role": "investor",          # 👈 auto investor role
+                "password": hash_password(pw),   # store hashed
+                "role": "investor",
                 "investor_name": name_clean,
-                "active": False,              # or False if you want admin approval first
+                "active": False,                 # admin must activate
                 "phone": phone or "",
                 "email": email_clean,
                 "investor_name_locked": False,
                 "username_locked": False,
                 "last_login": None,
                 "prev_login": None,
+                "failed_attempts": 0,
+                "locked_until": None,
             }
 
             save_users(users)
             st.session_state["users"] = users
 
-            # auto-login new investor
-            st.session_state["user"] = {
-                "username": new_username,
-                "role": "investor",
-                "investor_name": name_clean,
-            }
-
             st.success("Account created. Admin needs to activate your account before you can log in.")
             st.session_state["login_mode"] = "login"
             st.rerun()
 
-    
-    
+    # ---------------------------
+    # FORGOT PASSWORD MODE
+    # ---------------------------
     elif mode == "forgot":
         st.title("Northeast Capitol - Forgot Password")
         st.markdown("Enter your registered email and choose a new password.")
@@ -1026,7 +1027,7 @@ def login_screen():
             submitted = st.form_submit_button("Reset password")
 
         if submitted:
-            email_clean = fp_email.strip().lower()
+            email_clean = (fp_email or "").strip().lower()
             if not email_clean:
                 st.error("Email is required.")
             elif not fp_new_pwd:
@@ -1046,7 +1047,7 @@ def login_screen():
                     st.error("This email is not registered.")
                 elif len(matched_usernames) > 1:
                     st.error("More than one account uses this email. Please contact admin.")
-               else:
+                else:
                     uname = matched_usernames[0]
                     u = users[uname]
                     u["password"] = hash_password(fp_new_pwd)
@@ -1056,12 +1057,12 @@ def login_screen():
                     st.session_state["users"] = users
                     st.success("Password has been reset. You can now log in.")
 
-
         if st.button("Back to login"):
             st.session_state["login_mode"] = "login"
             st.rerun()
 
     st.stop()
+
 
 # ============================================================
 # APPROVAL HELPERS
@@ -1966,7 +1967,7 @@ elif role == "admin" and nav_page == "User management":
         active_flag = st.checkbox("Active", value=True)
         submitted = st.form_submit_button("Save user")
 
-    if submitted:
+        if submitted:
         if not username:
             st.error("Username is required.")
         elif role_new == "investor" and not investor_name:
@@ -1978,7 +1979,7 @@ elif role == "admin" and nav_page == "User management":
         elif not password and username not in users:
             st.error("Password is required for new user.")
         else:
-                        u = users.get(username, {})
+            u = users.get(username, {})
             if password:
                 if not is_strong_password(password):
                     st.error("Password must be at least 8 characters and contain letters and numbers.")
@@ -2002,6 +2003,7 @@ elif role == "admin" and nav_page == "User management":
 
             st.success("User saved.")
             st.rerun()
+
 
 elif role == "admin" and nav_page == "System settings":
     st.subheader("System settings")

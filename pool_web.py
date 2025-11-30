@@ -249,7 +249,7 @@ def generate_unique_username(base: str, users: Dict[str, Any]) -> str:
         i += 1
     return username
 
-def is_demo_mode() -> bool:
+ddef is_demo_mode() -> bool:
     """Return True if the app is running in demo mode (no saving)."""
     return bool(st.session_state.get("demo_mode", False))
 
@@ -1944,89 +1944,164 @@ elif role == "admin" and nav_page == "Messages / Notifications":
 elif role == "admin" and nav_page == "User management":
     st.subheader("User management")
 
-    # Two columns: left = existing users, right = create/update form
-    col_existing, col_edit = st.columns([2, 1])
-
     # -----------------------
-    # LEFT: existing users
+    # Existing users table
     # -----------------------
-    with col_existing:
-        st.markdown("### Existing users")
+    st.markdown("### Existing users")
+    rows = []
+    for uname, u in users.items():
+        rows.append(
+            {
+                "username": uname,
+                "role": u.get("role"),
+                "investor_name": u.get("investor_name"),
+                "email": u.get("email"),
+                "phone": u.get("phone"),
+                "active": u.get("active", True),
+            }
+        )
+    if rows:
+        df_users = pd.DataFrame(rows)
+        st.dataframe(df_users, use_container_width=True)
+    else:
+        st.info("No users yet. Use the form below to create one.")
 
-        rows = []
-        for uname, u in users.items():
-            rows.append(
-                {
-                    "username": uname,
-                    "role": u.get("role"),
-                    "investor_name": u.get("investor_name"),
-                    "email": u.get("email"),
-                    "phone": u.get("phone"),
-                    "active": u.get("active", True),
-                }
+    st.markdown("---")
+
+    # =========================================================
+    # A. CREATE NEW USER
+    # =========================================================
+    st.markdown("### Create new user")
+
+    with st.form("create_user_form"):
+        c_username = st.text_input("New username (for login display)")
+        c_password = st.text_input("Password", type="password")
+        c_role = st.selectbox("Role", ["admin", "investor"], key="create_role")
+        c_investor_name = st.text_input("Investor name (for investor role)")
+        c_email = st.text_input("Email (login)")
+        c_phone = st.text_input("Phone number")
+        c_active = st.checkbox("Active", value=True, key="create_active")
+        c_submitted = st.form_submit_button("Create user")
+
+    if c_submitted:
+        if not c_username:
+            st.error("Username is required.")
+        elif c_username in users:
+            st.error("This username already exists. Use the 'Update user' section below.")
+        elif c_role == "investor" and not c_investor_name:
+            st.error("Investor name is required for investor role.")
+        elif not c_email:
+            st.error("Email is required.")
+        elif not c_phone:
+            st.error("Phone number is required.")
+        elif not c_password:
+            st.error("Password is required for new user.")
+        elif not is_strong_password(c_password):
+            st.error("Password must be at least 8 characters and contain letters and numbers.")
+        else:
+            new_user = {
+                "password": c_password,  # (plain for now; you can switch to hash later)
+                "role": c_role,
+                "investor_name": c_investor_name if c_role == "investor" else None,
+                "email": c_email,
+                "phone": c_phone,
+                "active": c_active,
+                "investor_name_locked": False,
+                "username_locked": False,
+                "last_login": None,
+                "prev_login": None,
+            }
+            users[c_username] = new_user
+            save_users(users)
+            st.session_state["users"] = users
+
+            if c_role == "investor" and c_investor_name:
+                data["investors"].setdefault(c_investor_name, {"units": 0.0})
+                save_data(data)
+
+            st.success(f"User '{c_username}' created.")
+            st.rerun()
+
+    st.markdown("---")
+
+    # =========================================================
+    # B. UPDATE EXISTING USER
+    # =========================================================
+    st.markdown("### Update existing user")
+
+    if not users:
+        st.info("No users to update.")
+    else:
+        # pick an existing user to edit
+        usernames_sorted = sorted(users.keys())
+        u_selected_name = st.selectbox("Select user to update", usernames_sorted)
+
+        u_selected = users[u_selected_name]
+
+        with st.form("update_user_form"):
+            u_password = st.text_input(
+                "New password (leave blank to keep current)",
+                type="password",
+            )
+            u_role = st.selectbox(
+                "Role",
+                ["admin", "investor"],
+                index=0 if u_selected.get("role") == "admin" else 1,
+                key="update_role",
+            )
+            u_investor_name = st.text_input(
+                "Investor name (for investor role)",
+                value=u_selected.get("investor_name") or "",
+            )
+            u_email = st.text_input(
+                "Email (login)",
+                value=u_selected.get("email") or "",
+            )
+            u_phone = st.text_input(
+                "Phone number",
+                value=u_selected.get("phone") or "",
+            )
+            u_active = st.checkbox(
+                "Active",
+                value=u_selected.get("active", True),
+                key="update_active",
             )
 
-        if rows:
-            df_users = pd.DataFrame(rows)
-            st.dataframe(df_users, use_container_width=True)
-        else:
-            st.info("No users yet. Use the form on the right to add one.")
+            u_submitted = st.form_submit_button("Save changes")
 
-    # -----------------------
-    # RIGHT: create / update user
-    # -----------------------
-    with col_edit:
-        st.markdown("### Create / update user")
-
-        with st.form("user_form"):
-            username = st.text_input("Username (for login display)")
-            password = st.text_input("Password", type="password")
-            role_new = st.selectbox("Role", ["admin", "investor"])
-            investor_name = st.text_input("Investor name (for investor role)")
-            email = st.text_input("Email (login)", value="")
-            phone = st.text_input("Phone number", value="")
-            active_flag = st.checkbox("Active", value=True)
-            submitted_user = st.form_submit_button("Save user")
-
-        if submitted_user:
-            if not username:
-                st.error("Username is required.")
-            elif role_new == "investor" and not investor_name:
+        if u_submitted:
+            if u_role == "investor" and not u_investor_name:
                 st.error("Investor name is required for investor role.")
-            elif not email:
+            elif not u_email:
                 st.error("Email is required.")
-            elif not phone:
+            elif not u_phone:
                 st.error("Phone number is required.")
-            elif not password and username not in users:
-                st.error("Password is required for new user.")
+            elif u_password and not is_strong_password(u_password):
+                st.error("Password must be at least 8 characters and contain letters and numbers.")
             else:
-                u = users.get(username, {})
-                if password:
-                    if not is_strong_password(password):
-                        st.error("Password must be at least 8 characters and contain letters and numbers.")
-                        st.stop()
-                    # store hashed password
-                    u["password"] = hash_password(password)
+                # update existing record
+                if u_password:
+                    u_selected["password"] = u_password
 
-                u["role"] = role_new
-                u["investor_name"] = investor_name if role_new == "investor" else None
-                u["email"] = email
-                u["phone"] = phone
-                u["active"] = active_flag
-                u.setdefault("investor_name_locked", False)
-                u.setdefault("username_locked", False)
+                u_selected["role"] = u_role
+                u_selected["investor_name"] = u_investor_name if u_role == "investor" else None
+                u_selected["email"] = u_email
+                u_selected["phone"] = u_phone
+                u_selected["active"] = u_active
+                u_selected.setdefault("investor_name_locked", False)
+                u_selected.setdefault("username_locked", False)
 
-                users[username] = u
+                users[u_selected_name] = u_selected
                 save_users(users)
                 st.session_state["users"] = users
 
-                # Make sure investor exists in pool data
-                if role_new == "investor" and investor_name:
-                    data["investors"].setdefault(investor_name, {"units": 0.0})
+                if u_role == "investor" and u_investor_name:
+                    data["investors"].setdefault(u_investor_name, {"units": 0.0})
                     save_data(data)
 
-                st.success("User saved.")
+                st.success(f"User '{u_selected_name}' updated.")
                 st.rerun()
+
 
 
 
@@ -2483,4 +2558,3 @@ elif role == "investor" and nav_page == "Messages / Chat":
                     ntype="chat",
                 )
                 st.success("Message sent to admin.")
-

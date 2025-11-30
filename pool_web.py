@@ -249,7 +249,7 @@ def generate_unique_username(base: str, users: Dict[str, Any]) -> str:
         i += 1
     return username
 
-def is_demo_mode() -> bool:
+ddef is_demo_mode() -> bool:
     """Return True if the app is running in demo mode (no saving)."""
     return bool(st.session_state.get("demo_mode", False))
 
@@ -1944,70 +1944,89 @@ elif role == "admin" and nav_page == "Messages / Notifications":
 elif role == "admin" and nav_page == "User management":
     st.subheader("User management")
 
-    st.markdown("### Existing users")
-    rows = []
-    for uname, u in users.items():
-        rows.append(
-            {
-                "username": uname,
-                "role": u.get("role"),
-                "investor_name": u.get("investor_name"),
-                "email": u.get("email"),
-                "phone": u.get("phone"),
-                "active": u.get("active", True),
-            }
-        )
-    df_users = pd.DataFrame(rows)
-    st.dataframe(df_users, use_container_width=True)
+    # Two columns: left = existing users, right = create/update form
+    col_existing, col_edit = st.columns([2, 1])
 
-    st.markdown("### Create / update user")
+    # -----------------------
+    # LEFT: existing users
+    # -----------------------
+    with col_existing:
+        st.markdown("### Existing users")
 
-    with st.form("user_form"):
-        username = st.text_input("Username (for login display)")
-        password = st.text_input("Password", type="password")
-        role_new = st.selectbox("Role", ["admin", "investor"])
-        investor_name = st.text_input("Investor name (for investor role)")
-        email = st.text_input("Email (login)", value="")
-        phone = st.text_input("Phone number", value="")
-        active_flag = st.checkbox("Active", value=True)
-        submitted = st.form_submit_button("Save user")
+        rows = []
+        for uname, u in users.items():
+            rows.append(
+                {
+                    "username": uname,
+                    "role": u.get("role"),
+                    "investor_name": u.get("investor_name"),
+                    "email": u.get("email"),
+                    "phone": u.get("phone"),
+                    "active": u.get("active", True),
+                }
+            )
 
-    if submitted:
-        if not username:
-            st.error("Username is required.")
-        elif role_new == "investor" and not investor_name:
-            st.error("Investor name is required for investor role.")
-        elif not email:
-            st.error("Email is required.")
-        elif not phone:
-            st.error("Phone number is required.")
-        elif not password and username not in users:
-            st.error("Password is required for new user.")
+        if rows:
+            df_users = pd.DataFrame(rows)
+            st.dataframe(df_users, use_container_width=True)
         else:
-            u = users.get(username, {})
-            if password:
-                if not is_strong_password(password):
-                    st.error("Password must be at least 8 characters and contain letters and numbers.")
-                    st.stop()
-                u["password"] = hash_password(password)
-            u["role"] = role_new
-            u["investor_name"] = investor_name if role_new == "investor" else None
+            st.info("No users yet. Use the form on the right to add one.")
 
-            u["email"] = email
-            u["phone"] = phone
-            u["active"] = active_flag
-            u.setdefault("investor_name_locked", False)
-            u.setdefault("username_locked", False)
-            users[username] = u
-            save_users(users)
-            st.session_state["users"] = users
+    # -----------------------
+    # RIGHT: create / update user
+    # -----------------------
+    with col_edit:
+        st.markdown("### Create / update user")
 
-            if role_new == "investor" and investor_name:
-                data["investors"].setdefault(investor_name, {"units": 0.0})
-                save_data(data)
+        with st.form("user_form"):
+            username = st.text_input("Username (for login display)")
+            password = st.text_input("Password", type="password")
+            role_new = st.selectbox("Role", ["admin", "investor"])
+            investor_name = st.text_input("Investor name (for investor role)")
+            email = st.text_input("Email (login)", value="")
+            phone = st.text_input("Phone number", value="")
+            active_flag = st.checkbox("Active", value=True)
+            submitted_user = st.form_submit_button("Save user")
 
-            st.success("User saved.")
-            st.rerun()
+        if submitted_user:
+            if not username:
+                st.error("Username is required.")
+            elif role_new == "investor" and not investor_name:
+                st.error("Investor name is required for investor role.")
+            elif not email:
+                st.error("Email is required.")
+            elif not phone:
+                st.error("Phone number is required.")
+            elif not password and username not in users:
+                st.error("Password is required for new user.")
+            else:
+                u = users.get(username, {})
+                if password:
+                    if not is_strong_password(password):
+                        st.error("Password must be at least 8 characters and contain letters and numbers.")
+                        st.stop()
+                    # store hashed password
+                    u["password"] = hash_password(password)
+
+                u["role"] = role_new
+                u["investor_name"] = investor_name if role_new == "investor" else None
+                u["email"] = email
+                u["phone"] = phone
+                u["active"] = active_flag
+                u.setdefault("investor_name_locked", False)
+                u.setdefault("username_locked", False)
+
+                users[username] = u
+                save_users(users)
+                st.session_state["users"] = users
+
+                # Make sure investor exists in pool data
+                if role_new == "investor" and investor_name:
+                    data["investors"].setdefault(investor_name, {"units": 0.0})
+                    save_data(data)
+
+                st.success("User saved.")
+                st.rerun()
 
 
 
@@ -2459,12 +2478,8 @@ elif role == "investor" and nav_page == "Messages / Chat":
                     data,
                     from_user=user["username"],
                     to_usernames=admins,
-                title=title,
+                    title=title,
                     message=msg,
                     ntype="chat",
                 )
                 st.success("Message sent to admin.")
-
-
-
-

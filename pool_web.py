@@ -249,6 +249,10 @@ def generate_unique_username(base: str, users: Dict[str, Any]) -> str:
         i += 1
     return username
 
+def is_demo_mode() -> bool:
+    """Return True if the app is running in demo mode (no saving)."""
+    return bool(st.session_state.get("demo_mode", False))
+
 
 def get_settings(data: Dict[str, Any]) -> Dict[str, Any]:
     if "settings" not in data or not isinstance(data["settings"], dict):
@@ -811,7 +815,7 @@ def rename_investor_everywhere(data: Dict[str, Any], old: str, new: str) -> None
 # LOGIN & FORGOT PASSWORD
 # ============================================================
 
-def login_screen():
+ddef login_screen():
     if "users" not in st.session_state:
         st.session_state["users"] = load_users()
     users = st.session_state["users"]
@@ -1062,6 +1066,7 @@ def login_screen():
             st.rerun()
 
     st.stop()
+
 
 
 # ============================================================
@@ -1967,7 +1972,7 @@ elif role == "admin" and nav_page == "User management":
         active_flag = st.checkbox("Active", value=True)
         submitted = st.form_submit_button("Save user")
 
-        if submitted:
+    if submitted:
         if not username:
             st.error("Username is required.")
         elif role_new == "investor" and not investor_name:
@@ -2003,6 +2008,7 @@ elif role == "admin" and nav_page == "User management":
 
             st.success("User saved.")
             st.rerun()
+
 
 
 elif role == "admin" and nav_page == "System settings":
@@ -2453,8 +2459,4 @@ elif role == "investor" and nav_page == "Messages / Chat":
                     data,
                     from_user=user["username"],
                     to_usernames=admins,
-                    title=title,
-                    message=msg,
-                    ntype="chat",
-                )
-                st.success("Message sent to admin.")
+              
